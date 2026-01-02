@@ -18,6 +18,46 @@ const CalibrationModal: React.FC<CalibrationModalProps> = ({ wallImageUrl, wallI
   // In a real app, this might be a more sophisticated SVG overlay
   const [rulerPos, setRulerPos] = useState({ x: 50, y: 50 });
 
+  // Magnifier State
+  const [magnifier, setMagnifier] = useState({ show: false, x: 0, y: 0, bgX: 0, bgY: 0, zoom: 3 });
+  const imageContainerRef = useRef<HTMLDivElement>(null);
+
+  const updateMagnifier = (e: MouseEvent | TouchEvent) => {
+      if (!imageContainerRef.current) return;
+      
+      const container = imageContainerRef.current.getBoundingClientRect();
+      let clientX, clientY;
+      
+      if ('touches' in e) {
+          clientX = e.touches[0].clientX;
+          clientY = e.touches[0].clientY;
+      } else {
+          clientX = (e as MouseEvent).clientX;
+          clientY = (e as MouseEvent).clientY;
+      }
+
+      // Relative position inside the image container
+      const relX = clientX - container.left;
+      const relY = clientY - container.top;
+      
+      // Calculate background position for the magnifier (centering the view)
+      // We want the point (relX, relY) to be in the center of the magnifier (size 120px)
+      // Background Image must be scaled by 'zoom'.
+      // The offset is: - (relX * zoom - magnifierSize/2)
+      const glassSize = 140;
+      const bgX = - (relX * magnifier.zoom - glassSize / 2);
+      const bgY = - (relY * magnifier.zoom - glassSize / 2);
+
+      setMagnifier(prev => ({ 
+          ...prev, 
+          show: true, 
+          x: clientX, 
+          y: clientY - 100, // Show above finger/cursor
+          bgX, 
+          bgY 
+      }));
+  };
+
   const handleSave = () => {
     const inches = parseFloat(realLengthInches);
     if (!inches || inches <= 0) {
@@ -50,6 +90,7 @@ const CalibrationModal: React.FC<CalibrationModalProps> = ({ wallImageUrl, wallI
         <div className="relative flex-1 bg-gray-900 rounded-xl overflow-hidden border border-border flex items-center justify-center">
           {/* Wall Image Container - we try to fit it in the modal */}
           <div
+            ref={imageContainerRef}
             className="relative shadow-lg"
             style={{
               width: wallImageDimensions.width,
@@ -74,10 +115,13 @@ const CalibrationModal: React.FC<CalibrationModalProps> = ({ wallImageUrl, wallI
               size={{ width: lineLengthPx, height: 40 }}
               position={{ x: rulerPos.x, y: rulerPos.y }}
               onDragStop={(e, d) => setRulerPos({ x: d.x, y: d.y })}
-              onResizeStop={(e, direction, ref, delta, position) => {
+              onResizeStart={(e) => updateMagnifier(e as any)}
+              onResize={(e, direction, ref, delta, position) => {
                 setLineLengthPx(parseInt(ref.style.width));
                 setRulerPos(position);
+                updateMagnifier(e as any);
               }}
+              onResizeStop={() => setMagnifier(prev => ({ ...prev, show: false }))}
               bounds="parent"
               enableResizing={{ top: false, right: true, bottom: false, left: true, topRight: false, bottomRight: false, bottomLeft: false, topLeft: false }}
               className="z-10 flex items-center"
@@ -97,6 +141,31 @@ const CalibrationModal: React.FC<CalibrationModalProps> = ({ wallImageUrl, wallI
               </div>
             </Rnd>
           </div>
+          
+             {/* Magnifying Glass Portal/Overlay */}
+             {magnifier.show && imageContainerRef.current && (
+                 <div 
+                    className="fixed pointer-events-none rounded-full border-4 border-white shadow-2xl z-50"
+                    style={{
+                        width: 140,
+                        height: 140,
+                        left: magnifier.x,
+                        top: magnifier.y,
+                        transform: 'translate(-50%, -50%)',
+                        backgroundImage: `url(${wallImageUrl})`,
+                        backgroundRepeat: 'no-repeat',
+                        backgroundSize: `${imageContainerRef.current.clientWidth * magnifier.zoom}px ${imageContainerRef.current.clientHeight * magnifier.zoom}px`,
+                        backgroundPosition: `${magnifier.bgX}px ${magnifier.bgY}px`,
+                        backgroundColor: '#fff' 
+                    }}
+                 >
+                    {/* Crosshair */}
+                    <div className="absolute inset-0 flex items-center justify-center opacity-50">
+                        <div className="w-full h-px bg-red-500"></div>
+                        <div className="h-full w-px bg-red-500 absolute"></div>
+                    </div>
+                 </div>
+             )}
         </div>
 
         {/* Controls */}

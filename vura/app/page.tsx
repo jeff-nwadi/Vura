@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Rnd } from 'react-rnd';
 import { Upload, LayoutGrid, Trash2, Save, Download, Ruler } from 'lucide-react';
+import gsap from 'gsap';
 import CalibrationModal from './components/CalibrationModal';
 import ArtUploader from './components/ArtUploader';
 import { LayoutEngine } from './utils/layoutEngine';
@@ -88,6 +89,42 @@ const VuraApp = () => {
   };
   // Ref for the visual canvas to get accurate CSS pixel dimensions for layout
   const wallContainerRef = React.useRef<HTMLDivElement>(null);
+
+  // Animation Refs
+  const prevArtPiecesRef = React.useRef<ArtPiece[]>([]);
+  
+  // Handle Layout Animations
+  useEffect(() => {
+    // Check if we have previous positions to animate from
+    if (prevArtPiecesRef.current.length > 0 && artPieces.length === prevArtPiecesRef.current.length) {
+       artPieces.forEach(piece => {
+          const prevPiece = prevArtPiecesRef.current.find(p => p.id === piece.id);
+          // Find the Rnd element directly by unique ID
+          const element = document.getElementById(`art-piece-${piece.id}`);
+          
+          if (prevPiece && element) {
+              const dx = Math.abs(piece.x - prevPiece.x);
+              const dy = Math.abs(piece.y - prevPiece.y);
+              
+              if (dx > 5 || dy > 5) {
+                 // GSAP Animation
+                 // Rnd uses transform for positioning. We animate from the OLD position to the NEW (current).
+                 // Use immediateRender: true to jump to start immediately.
+                 
+                 // NOTE: Rnd applies position via translate. GSAP x/y also applies via translate.
+                 // We need to be careful not to break Rnd's state.
+                 // We will simply animate from the previous coordinate.
+                 
+                 gsap.fromTo(element, 
+                    { x: prevPiece.x, y: prevPiece.y },
+                    { x: piece.x, y: piece.y, duration: 0.5, ease: "power3.out", overwrite: "auto" }
+                 );
+              }
+          }
+       });
+    }
+    prevArtPiecesRef.current = artPieces;
+  }, [artPieces]);
 
   // Helper to get PPI or default
   const getPPI = () => {
@@ -314,6 +351,8 @@ const VuraApp = () => {
             {artPieces.map((art) => (
               <Rnd
                 key={art.id}
+                // Add unique ID for GSAP to find it
+                id={`art-piece-${art.id}`}
                 default={{ x: art.x, y: art.y, width: art.width, height: art.height }}
                 position={{ x: art.x, y: art.y }}
                 onDragStop={(e, d) => {
