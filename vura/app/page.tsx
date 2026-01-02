@@ -219,11 +219,10 @@ const VuraApp = () => {
   }
 
   return (
-    <div className="flex flex-col items-center min-h-screen bg-background p-6 font-sans text-foreground">
+    <div className="flex flex-col items-center min-h-screen bg-background p-6 text-foreground">
       <header className="mb-8 w-full max-w-6xl flex flex-col md:flex-row justify-between items-center md:items-end border-b border-border pb-4 gap-4">
         <div className="text-center md:text-left">
           <h1 className="text-4xl font-black text-foreground tracking-tighter cursor-pointer" onClick={() => setHasStarted(false)}>VURA<span className="text-blue-500">.</span></h1>
-          <p className="text-gray-400 font-medium text-sm mt-1">Spatial Design Engine</p>
         </div>
         <div className="flex gap-2 w-full md:w-auto justify-center">
           <input

@@ -7,7 +7,7 @@ interface LandingPageProps {
 
 const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
   return (
-    <div className="min-h-screen bg-background flex flex-col font-sans text-foreground">
+    <div className="min-h-screen bg-background flex flex-col text-foreground">
 
       {/* Navigation */}
       <nav className="flex justify-between items-center p-6 max-w-7xl mx-auto w-full">
@@ -24,7 +24,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
           <span>New: AI Background Removal included</span>
         </div>
 
-        <h1 className="text-5xl md:text-7xl font-black tracking-tight mb-6 max-w-4xl text-pretty">
+        <h1 className="text-5xl md:text-7xl heading tracking-tight mb-6 max-w-4xl text-pretty font-black">
           Put the first nail <br />
           <span className="text-transparent bg-clip-text bg-linear-to-r from-blue-500 to-purple-500">
             in the right spot.
