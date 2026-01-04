@@ -8,6 +8,7 @@ import CalibrationModal from './components/CalibrationModal';
 import ArtUploader from './components/ArtUploader';
 import { LayoutEngine } from './utils/layoutEngine';
 import { generateHangingGuide } from './utils/pdfGenerator';
+import { LayoutSelector } from './components/LayoutSelector';
 
 interface ArtPiece {
   id: number;
@@ -126,16 +127,31 @@ const VuraApp = () => {
     prevArtPiecesRef.current = artPieces;
   }, [artPieces]);
 
-  // Helper to get PPI or default
-  const getPPI = () => {
-    if (ppi > 0) return ppi;
-
-    // Fallback: Height-based estimation is safer for "eye level" vertical placement.
-    // Assume standard 8ft (96 inch) ceiling height for the view.
-    if (wallContainerRef.current) {
-      return wallContainerRef.current.clientHeight / 96;
+  // Helper to get Effective PPI based on current view scale
+  const getEffectivePPI = () => {
+    if (ppi === 0 || !wallContainerRef.current || wallDimensions.width === 0) {
+        // Fallback or uncalibrated
+        // Assume standard 8ft ceiling height if uncalibrated?
+        // Or if we don't have intrinsic dimensions, we can't do much.
+        if (wallContainerRef.current) {
+            return wallContainerRef.current.clientHeight / 96; 
+        }
+        return 50; 
     }
-    return 50;
+
+    // Determine current scale of the image in the container
+    // background-size: cover
+    const containerW = wallContainerRef.current.clientWidth;
+    const containerH = wallContainerRef.current.clientHeight;
+    
+    const scaleW = containerW / wallDimensions.width;
+    const scaleH = containerH / wallDimensions.height;
+    
+    // Cover uses the larger scale to fill the container
+    // (Assuming center positioning, which we use)
+    const scale = Math.max(scaleW, scaleH);
+    
+    return ppi * scale;
   };
 
   const getCanvasSize = () => {
@@ -157,35 +173,68 @@ const VuraApp = () => {
     setArtPieces(prev => prev.map(p => ({ ...p, x: p.x + dx, y: p.y + dy })));
   };
 
+  const handleLayoutSelect = (template: string) => {
+    const activePPI = getEffectivePPI();
+    const { width, height } = getCanvasSize();
+    showCalibrationWarning();
+    
+    // Default start positions
+    // Center logic depends on template
+    const centerX = width / 2;
+    const centerLineY = LayoutEngine.apply57InchRule(0, height, activePPI);
+    
+    // For big-center, use center. For others, maybe start left-ish?
+    // Let's pass sensible defaults and let engine handle specifics
+    // engine now accepts specific startX/Y
+    
+    // We try to center the group vertically on the 57" line
+    // The engine's applyTemplate mostly uses startY as 'Top' or 'Center' depending on logic?
+    // I updated LayoutEngine to use startY as Top mostly.
+    // So we need to calculate a top that centers it?
+    // Hard without knowing total height strictly beforehand.
+    // Let's guess top is 57" line minus ~15 inches
+    const estimatedTop = centerLineY - LayoutEngine.inchesToPixels(15, activePPI);
+    
+    const updated = LayoutEngine.applyTemplate(artPieces, template, {
+        startX: template === 'row' || template === 'big-center' ? centerX : (width/2) - LayoutEngine.inchesToPixels(20, activePPI), // Heuristic
+        startY: Math.max(20, estimatedTop),
+        gapInches: 3,
+        ppi: activePPI,
+        wallWidth: width
+    });
+    
+    setArtPieces(updated as ArtPiece[]);
+  };
+
   // Layout Algorithms
   const apply57InchRule = () => {
     const { height } = getCanvasSize();
     if (height === 0) return;
-    const activePPI = getPPI();
+    const activePPI = getEffectivePPI();
     showCalibrationWarning();
 
     const updated = artPieces.map(p => {
       let newY = LayoutEngine.apply57InchRule(p.height, height, activePPI);
-      // Visual Adjustment: 57" is mathematically correct for floor, 
-      // but often visually feels stable slightly higher (Golden Ratio ~38-40% from top).
-      // Our activePPI calculation (height/96) puts 57" at roughly 41% from top (1 - 57/96).
-      // This should be much better than width-based.
-
-      if (newY < 0) newY = 0;
-      if (newY + p.height > height) newY = height - p.height;
+      // Removed clamping to preserve alignment line
       return { ...p, y: newY };
     });
     setArtPieces(updated);
   };
 
   const autoArrange = () => {
-    const activePPI = getPPI();
+    const activePPI = getEffectivePPI();
     const { height } = getCanvasSize();
+
+    // Resize Art based on activePPI?
+    // Ideally art pieces should be sized in inches initially.
+    // If PPI changes, we should technically re-scale the art pieces to maintain their real world size?
+    // For now, we assume user uploads art and we set a default size.
+    // If we have PPI, we should enforce size?
+    // Let's just layout for now.
 
     const updated = LayoutEngine.autoArrangeUniform(artPieces, LayoutEngine.inchesToPixels(10, activePPI), 3, activePPI);
     setArtPieces(updated.map((p: any) => {
       let newY = LayoutEngine.apply57InchRule(p.height, height, activePPI);
-      if (newY < 0) newY = 0;
       return { ...p, y: newY };
     }) as ArtPiece[]);
   };
@@ -195,7 +244,7 @@ const VuraApp = () => {
   const [mosaicVariant, setMosaicVariant] = useState(0);
 
   const applyGrid = () => {
-    const activePPI = getPPI();
+    const activePPI = getEffectivePPI();
     const { width, height } = getCanvasSize();
     showCalibrationWarning();
 
@@ -203,17 +252,21 @@ const VuraApp = () => {
     setGridVariant(nextVariant);
 
     const startX = (width / 2) - LayoutEngine.inchesToPixels(30, activePPI);
-    let startY = LayoutEngine.apply57InchRule(0, height, activePPI) - 100; // Offset to center group
+    // Fix: Use inch-based offset instead of hardcoded 100px pixels to account for scale
+    // 57" Rule gives center line. We want to start Grid ~12 inches above center to center the group?
+    const centerLineY = LayoutEngine.apply57InchRule(0, height, activePPI);
+    let startY = centerLineY - LayoutEngine.inchesToPixels(12, activePPI); 
 
     if (startY < 20) startY = 20;
     const safeStartX = Math.max(20, startX);
 
-    const updated = LayoutEngine.arrangeGrid(artPieces, safeStartX, startY, 2, activePPI, nextVariant);
+    // Increased gap to 3 inches
+    const updated = LayoutEngine.arrangeGrid(artPieces, safeStartX, startY, 3, activePPI, nextVariant);
     setArtPieces(updated as ArtPiece[]);
   };
 
   const applyMosaic = () => {
-    const activePPI = getPPI();
+    const activePPI = getEffectivePPI();
     const { width, height } = getCanvasSize();
     showCalibrationWarning();
 
@@ -226,7 +279,8 @@ const VuraApp = () => {
     if (centerY < height * 0.2) centerY = height * 0.3;
     if (centerY > height * 0.8) centerY = height * 0.5;
 
-    const updated = LayoutEngine.arrangeMosaic(artPieces, width / 2, centerY, 2, activePPI, nextVariant);
+    // Increased gap to 3 inches
+    const updated = LayoutEngine.arrangeMosaic(artPieces, width / 2, centerY, 3, activePPI, nextVariant);
     setArtPieces(updated as ArtPiece[]);
   };
 
@@ -306,13 +360,22 @@ const VuraApp = () => {
             </button>
 
             {/* Layout Controls */}
-            <div className="flex flex-wrap bg-gray-900 rounded-lg p-1 gap-1">
-              <button onClick={autoArrange} className="px-3 py-1 bg-gray-800 rounded-md text-gray-200 font-medium text-xs hover:bg-gray-700 grow text-center">Line</button>
-              <button onClick={applyGrid} className="px-3 py-1 hover:bg-gray-800 rounded-md text-gray-400 font-medium text-xs transition grow text-center">Grid</button>
-              <button onClick={applyMosaic} className="px-3 py-1 hover:bg-gray-800 rounded-md text-gray-400 font-medium text-xs transition grow text-center">Mosaic</button>
-              <div className="w-px bg-gray-700 mx-1 hidden sm:block"></div>
-              <button onClick={apply57InchRule} className="px-3 py-1 hover:bg-blue-900/30 hover:text-blue-400 rounded-md text-gray-400 font-medium text-xs transition grow text-center" title="Center at 57 inches">57" Rule</button>
+            <div className="relative group">
+                <button className="flex items-center gap-2 px-4 py-2 hover:bg-gray-800 rounded-lg transition font-medium text-sm text-gray-300">
+                    <LayoutGrid size={16} /> Layouts
+                </button>
+                <div className="absolute top-full left-0 pt-2 w-64 z-40 hidden group-hover:block animate-in fade-in slide-in-from-top-2">
+                    <div className="shadow-xl border border-gray-800 rounded-xl overflow-hidden bg-card">
+                       <LayoutSelector onSelect={handleLayoutSelect} />
+                    </div>
+                </div>
             </div>
+
+            <div className="w-px bg-gray-700 h-8 mx-2 hidden sm:block"></div>
+
+            <button onClick={apply57InchRule} className="flex items-center gap-2 px-3 py-2 hover:bg-blue-900/30 hover:text-blue-400 rounded-lg text-gray-400 font-medium text-xs transition border border-gray-800 hover:border-blue-900/50" title="Center at 57 inches">
+               <span className="font-bold">57"</span> Center
+            </button>
 
             {/* Nudge Controls */}
             <div className="flex bg-gray-900 rounded-lg p-1 gap-1">
@@ -374,7 +437,7 @@ const VuraApp = () => {
                   {/* Measurements Hint */}
                   {ppi > 0 && (
                     <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 bg-black/70 text-white text-[10px] px-2 py-0.5 rounded opacity-0 group-hover/art:opacity-100">
-                      {(LayoutEngine.pixelsToInches(art.width, ppi)).toFixed(1)}"
+                      {(LayoutEngine.pixelsToInches(art.width, ppi * Math.max((wallContainerRef.current?.clientWidth || 1)/wallDimensions.width, (wallContainerRef.current?.clientHeight || 1)/wallDimensions.height))).toFixed(1)}"
                     </div>
                   )}
                   <button

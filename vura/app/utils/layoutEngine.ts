@@ -214,4 +214,139 @@ export class LayoutEngine {
     
     return updated;
   }
+
+  /**
+   * Applies a named template layout to the art pieces.
+   * @param items Art pieces to arrange.
+   * @param templateName Name of the template ('row', 'grid', 'big-left', 'big-right', 'stairs', 'spiral').
+   * @param config Configuration object { startX, startY, gapInches, ppi, wallWidth }.
+   */
+  static applyTemplate(
+      items: any[], 
+      templateName: string, 
+      config: { startX: number; startY: number; gapInches: number; ppi: number; wallWidth?: number }
+  ): any[] {
+      const { startX, startY, gapInches, ppi } = config;
+      const gap = gapInches * ppi;
+      
+      const sorted = [...items].sort((a, b) => (b.width * b.height) - (a.width * a.height));
+      const updated = [];
+
+      switch (templateName) {
+          case 'row': {
+              // Center the row
+              const totalWidth = items.reduce((sum, item) => sum + item.width, 0) + (items.length - 1) * gap;
+              let currentX = (config.wallWidth ? config.wallWidth / 2 : startX) - (totalWidth / 2);
+              
+              items.forEach(item => {
+                  updated.push({ ...item, x: currentX, y: startY });
+                  currentX += item.width + gap;
+              });
+              break;
+          }
+
+          case 'grid': {
+              // 2 items per row usually, or balanced
+              const cols = Math.ceil(Math.sqrt(items.length));
+              // Center grid?
+              // Simple balanced grid logic
+              let rowHeight = 0;
+              let rowWidth = 0;
+              let currentX = startX; 
+              let currentY = startY;
+              
+              // We need a more robust grid allowing for centering
+              // For MVP, reuse arrangeGrid logic but simpler
+              return this.arrangeGrid(items, startX, startY, gapInches, ppi, 0); 
+          }
+
+          case 'big-left': {
+             // Largest on left, others stacked on right
+             if (items.length === 0) return [];
+             const main = sorted[0];
+             const others = sorted.slice(1);
+             
+             updated.push({ ...main, x: startX, y: startY });
+             
+             let currentY = startY;
+             const rightX = startX + main.width + gap;
+             
+             others.forEach(item => {
+                 updated.push({ ...item, x: rightX, y: currentY });
+                 currentY += item.height + gap;
+             });
+             break;
+          }
+          
+          case 'big-right': {
+              // Largest on right, others stacked on left
+              if (items.length === 0) return [];
+              const main = sorted[0];
+              const others = sorted.slice(1);
+              
+              // We need to know total width to position 'right'? 
+              // Or just start Main at startX + others_width?
+              // Let's assume startX is the Left edge of the group.
+              
+              // Calculate width of the 'stack' (max width of others)
+              const stackWidth = others.reduce((max, item) => Math.max(max, item.width), 0);
+              
+              let currentY = startY;
+              others.forEach(item => {
+                  // Right align the stack items? or left align to startX?
+                  updated.push({ ...item, x: startX, y: currentY });
+                  currentY += item.height + gap;
+              });
+              
+              const mainX = startX + stackWidth + gap;
+              updated.push({ ...main, x: mainX, y: startY });
+              break;
+          }
+
+          case 'big-center': {
+              if (items.length === 0) return [];
+              const main = sorted[0];
+              const others = sorted.slice(1);
+              
+              // Center main
+              // For simplicity, just place Main, then alternate L/R
+              const mainX = startX; // This should be effectively 'center' if caller passes center?
+              // Actually, assume startX is center for this one
+              updated.push({ ...main, x: mainX - main.width/2, y: startY });
+              
+              const leftX = mainX - main.width/2 - gap;
+              const rightX = mainX + main.width/2 + gap;
+              
+              let lY = startY;
+              let rY = startY;
+              
+              others.forEach((item, i) => {
+                  if (i % 2 === 0) {
+                      updated.push({ ...item, x: leftX - item.width, y: lY });
+                      lY += item.height + gap;
+                  } else {
+                      updated.push({ ...item, x: rightX, y: rY });
+                      rY += item.height + gap;
+                  }
+              });
+              break;
+          }
+
+          case 'stairs': {
+              // Simple step down
+              let cx = startX;
+              let cy = startY;
+              items.forEach(item => {
+                  updated.push({ ...item, x: cx, y: cy });
+                  cx += item.width + gap;
+                  cy += item.height / 2;
+              });
+              break;
+          }
+
+          default:
+              return items;
+      }
+      return updated;
+  }
 }
