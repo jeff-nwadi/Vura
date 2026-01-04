@@ -2,13 +2,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { Rnd } from 'react-rnd';
-import { Upload, LayoutGrid, Trash2, Save, Download, Ruler } from 'lucide-react';
+import { Upload, LayoutGrid, Trash2, Save, Download, Ruler, Move, Layout } from 'lucide-react';
 import gsap from 'gsap';
 import CalibrationModal from './components/CalibrationModal';
 import ArtUploader from './components/ArtUploader';
 import { LayoutEngine } from './utils/layoutEngine';
 import { generateHangingGuide } from './utils/pdfGenerator';
 import { LayoutSelector } from './components/LayoutSelector';
+import { PerspectiveTransformer, Point } from './utils/perspectiveCorrection';
 
 interface ArtPiece {
   id: number;
@@ -30,6 +31,7 @@ const VuraApp = () => {
 
   // New States for Vura Logic
   const [ppi, setPpi] = useState<number>(0); // Pixels Per Inch
+  const [floorY, setFloorY] = useState<number>(0); // Intrinsic Y coordinate of the floor
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [roomName, setRoomName] = useState("My Gallery Wall");
   const [wallDimensions, setWallDimensions] = useState({ width: 0, height: 0 });
@@ -50,8 +52,23 @@ const VuraApp = () => {
     setRoomName(room.name);
     setWallImage(room.wall_image_url);
     setPpi(room.reference_ratio_ppi);
+    setFloorY(room.floor_y || 0); // Need to save this too
     setShowHistory(false);
   };
+
+  // ... (Other handlers like handleWallUpload, handleArtProcessed stay same) ...
+  // ...
+
+  // Helper handling
+  const handleCalibrationSave = (newPpi: number, newFloorY: number) => {
+      setPpi(newPpi);
+      setFloorY(newFloorY);
+      setIsCalibrating(false);
+  };
+
+  // ...
+
+  // Helpers will be defined below
 
   // ... (Other handlers like handleWallUpload, handleArtProcessed stay same) ...
   // Re-declaring handlers here as they depend on state closure
@@ -130,28 +147,23 @@ const VuraApp = () => {
   // Helper to get Effective PPI based on current view scale
   const getEffectivePPI = () => {
     if (ppi === 0 || !wallContainerRef.current || wallDimensions.width === 0) {
-        // Fallback or uncalibrated
-        // Assume standard 8ft ceiling height if uncalibrated?
-        // Or if we don't have intrinsic dimensions, we can't do much.
         if (wallContainerRef.current) {
             return wallContainerRef.current.clientHeight / 96; 
         }
         return 50; 
     }
+    return ppi * getScaleFactor();
+  };
 
-    // Determine current scale of the image in the container
-    // background-size: cover
-    const containerW = wallContainerRef.current.clientWidth;
-    const containerH = wallContainerRef.current.clientHeight;
-    
-    const scaleW = containerW / wallDimensions.width;
-    const scaleH = containerH / wallDimensions.height;
-    
-    // Cover uses the larger scale to fill the container
-    // (Assuming center positioning, which we use)
-    const scale = Math.max(scaleW, scaleH);
-    
-    return ppi * scale;
+  // Get current visual scale factor (Rendered / Intrinsic)
+  const getScaleFactor = () => {
+      if (!wallContainerRef.current || wallDimensions.width === 0) return 1;
+      const containerW = wallContainerRef.current.clientWidth;
+      const containerH = wallContainerRef.current.clientHeight;
+      const scaleW = containerW / wallDimensions.width;
+      const scaleH = containerH / wallDimensions.height;
+      // Cover uses the larger scale to fill the container (assuming center)
+      return Math.max(scaleW, scaleH);
   };
 
   const getCanvasSize = () => {
@@ -173,30 +185,29 @@ const VuraApp = () => {
     setArtPieces(prev => prev.map(p => ({ ...p, x: p.x + dx, y: p.y + dy })));
   };
 
+  // --- Layout Logic ---
+
+  const getCenterLineY = (activePPI: number, canvasHeight: number) => {
+      const scale = getScaleFactor();
+      const effectiveFloorY = floorY > 0 ? floorY * scale : canvasHeight;
+      const pixelsFromFloor = LayoutEngine.inchesToPixels(57, activePPI);
+      return effectiveFloorY - pixelsFromFloor;
+  };
+
   const handleLayoutSelect = (template: string) => {
     const activePPI = getEffectivePPI();
     const { width, height } = getCanvasSize();
     showCalibrationWarning();
     
-    // Default start positions
-    // Center logic depends on template
+    // Center logic
+    const centerLineY = getCenterLineY(activePPI, height);
     const centerX = width / 2;
-    const centerLineY = LayoutEngine.apply57InchRule(0, height, activePPI);
     
-    // For big-center, use center. For others, maybe start left-ish?
-    // Let's pass sensible defaults and let engine handle specifics
-    // engine now accepts specific startX/Y
-    
-    // We try to center the group vertically on the 57" line
-    // The engine's applyTemplate mostly uses startY as 'Top' or 'Center' depending on logic?
-    // I updated LayoutEngine to use startY as Top mostly.
-    // So we need to calculate a top that centers it?
-    // Hard without knowing total height strictly beforehand.
-    // Let's guess top is 57" line minus ~15 inches
+    // Top estimate for layouts (approx 15 inches above center)
     const estimatedTop = centerLineY - LayoutEngine.inchesToPixels(15, activePPI);
     
     const updated = LayoutEngine.applyTemplate(artPieces, template, {
-        startX: template === 'row' || template === 'big-center' ? centerX : (width/2) - LayoutEngine.inchesToPixels(20, activePPI), // Heuristic
+        startX: template === 'row' || template === 'big-center' ? centerX : (width/2) - LayoutEngine.inchesToPixels(20, activePPI), 
         startY: Math.max(20, estimatedTop),
         gapInches: 3,
         ppi: activePPI,
@@ -206,16 +217,17 @@ const VuraApp = () => {
     setArtPieces(updated as ArtPiece[]);
   };
 
-  // Layout Algorithms
   const apply57InchRule = () => {
     const { height } = getCanvasSize();
     if (height === 0) return;
     const activePPI = getEffectivePPI();
     showCalibrationWarning();
 
+    const centerLineY = getCenterLineY(activePPI, height);
+
     const updated = artPieces.map(p => {
-      let newY = LayoutEngine.apply57InchRule(p.height, height, activePPI);
-      // Removed clamping to preserve alignment line
+      // Center item on centerLineY
+      const newY = centerLineY - (p.height / 2);
       return { ...p, y: newY };
     });
     setArtPieces(updated);
@@ -223,18 +235,15 @@ const VuraApp = () => {
 
   const autoArrange = () => {
     const activePPI = getEffectivePPI();
-    const { height } = getCanvasSize();
-
-    // Resize Art based on activePPI?
-    // Ideally art pieces should be sized in inches initially.
-    // If PPI changes, we should technically re-scale the art pieces to maintain their real world size?
-    // For now, we assume user uploads art and we set a default size.
-    // If we have PPI, we should enforce size?
-    // Let's just layout for now.
-
+    const { height, width } = getCanvasSize();
+    // Default Line
     const updated = LayoutEngine.autoArrangeUniform(artPieces, LayoutEngine.inchesToPixels(10, activePPI), 3, activePPI);
+    
+    const centerLineY = getCenterLineY(activePPI, height);
+    
     setArtPieces(updated.map((p: any) => {
-      let newY = LayoutEngine.apply57InchRule(p.height, height, activePPI);
+      // Center on line
+       const newY = centerLineY - (p.height / 2);
       return { ...p, y: newY };
     }) as ArtPiece[]);
   };
@@ -252,15 +261,16 @@ const VuraApp = () => {
     setGridVariant(nextVariant);
 
     const startX = (width / 2) - LayoutEngine.inchesToPixels(30, activePPI);
-    // Fix: Use inch-based offset instead of hardcoded 100px pixels to account for scale
-    // 57" Rule gives center line. We want to start Grid ~12 inches above center to center the group?
-    const centerLineY = LayoutEngine.apply57InchRule(0, height, activePPI);
-    let startY = centerLineY - LayoutEngine.inchesToPixels(12, activePPI); 
+    
+    const centerLineY = getCenterLineY(activePPI, height);
+    // Start grid above center so the group is roughly centered?
+    // Let's assume grid is approx 30-40 inches tall?
+    // Start 15 inches above center
+    let startY = centerLineY - LayoutEngine.inchesToPixels(15, activePPI); 
 
     if (startY < 20) startY = 20;
     const safeStartX = Math.max(20, startX);
 
-    // Increased gap to 3 inches
     const updated = LayoutEngine.arrangeGrid(artPieces, safeStartX, startY, 3, activePPI, nextVariant);
     setArtPieces(updated as ArtPiece[]);
   };
@@ -273,13 +283,12 @@ const VuraApp = () => {
     const nextVariant = (mosaicVariant + 1) % 3;
     setMosaicVariant(nextVariant);
 
-    let centerY = LayoutEngine.apply57InchRule(0, height, activePPI);
+    let centerY = getCenterLineY(activePPI, height);
 
     // Safety clamp (20% to 80% of screen)
     if (centerY < height * 0.2) centerY = height * 0.3;
     if (centerY > height * 0.8) centerY = height * 0.5;
 
-    // Increased gap to 3 inches
     const updated = LayoutEngine.arrangeMosaic(artPieces, width / 2, centerY, 3, activePPI, nextVariant);
     setArtPieces(updated as ArtPiece[]);
   };
@@ -411,44 +420,66 @@ const VuraApp = () => {
               backgroundPosition: 'center'
             }}
           >
-            {artPieces.map((art) => (
-              <Rnd
-                key={art.id}
-                // Add unique ID for GSAP to find it
-                id={`art-piece-${art.id}`}
-                default={{ x: art.x, y: art.y, width: art.width, height: art.height }}
-                position={{ x: art.x, y: art.y }}
-                onDragStop={(e, d) => {
-                  setArtPieces(prev => prev.map(p => p.id === art.id ? { ...p, x: d.x, y: d.y } : p));
-                }}
-                onResizeStop={(e, direction, ref, delta, position) => {
-                  setArtPieces(prev => prev.map(p => p.id === art.id ? {
-                    ...p,
-                    width: parseInt(ref.style.width),
-                    height: parseInt(ref.style.height),
-                    ...position
-                  } : p));
-                }}
-                lockAspectRatio
-                bounds="parent"
-              >
-                <div className="w-full h-full relative group/art">
-                  <img src={art.url} alt="art" className="w-full h-full object-cover shadow-2xl pointer-events-none border-4 border-white" />
-                  {/* Measurements Hint */}
-                  {ppi > 0 && (
-                    <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 bg-black/70 text-white text-[10px] px-2 py-0.5 rounded opacity-0 group-hover/art:opacity-100">
-                      {(LayoutEngine.pixelsToInches(art.width, ppi * Math.max((wallContainerRef.current?.clientWidth || 1)/wallDimensions.width, (wallContainerRef.current?.clientHeight || 1)/wallDimensions.height))).toFixed(1)}"
+             {artPieces.map((art) => {
+                const scale = getScaleFactor();
+                const activePPI = ppi * scale;
+                const effectiveFloorY = floorY > 0 ? floorY * scale : (wallContainerRef.current?.clientHeight || wallDimensions.height);
+
+                const centerX = art.x + art.width / 2;
+                const centerY = art.y + art.height / 2;
+                const inchesFromLeft = (centerX / activePPI).toFixed(1);
+                const inchesFromFloor = ((effectiveFloorY - centerY) / activePPI).toFixed(1);
+
+                return (
+                <Rnd
+                  key={art.id}
+                  id={`art-piece-${art.id}`}
+                  size={{ width: art.width, height: art.height }}
+                  position={{ x: art.x, y: art.y }}
+                  onDragStop={(e, d) => {
+                    setArtPieces(prev => prev.map(p => p.id === art.id ? { ...p, x: d.x, y: d.y } : p));
+                  }}
+                  onResizeStop={(e, direction, ref, delta, position) => {
+                    setArtPieces(prev => prev.map(p => p.id === art.id ? { 
+                        ...p, 
+                        width: parseInt(ref.style.width), 
+                        height: parseInt(ref.style.height),
+                        ...position 
+                    } : p));
+                  }}
+                  lockAspectRatio={true}
+                  bounds="parent"
+                  className="group"
+                >
+                  <div className="relative w-full h-full shadow-2xl transition-transform hover:scale-[1.02] duration-200 group/art">
+                    <img
+                      src={art.url}
+                      alt="Art Piece"
+                      className="w-full h-full object-cover border-4 border-white"
+                      draggable={false}
+                    />
+                    
+                    {/* Nail Point Crosshair */}
+                    <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-md z-20 flex items-center justify-center opacity-0 group-hover/art:opacity-100 transition-opacity">
+                        <div className="w-full h-0.5 bg-red-500 absolute"></div>
+                        <div className="h-full w-0.5 bg-red-500 absolute"></div>
                     </div>
-                  )}
-                  <button
-                    onClick={() => setArtPieces(artPieces.filter(a => a.id !== art.id))}
-                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1.5 opacity-0 group-hover/art:opacity-100 transition shadow-md hover:bg-red-600"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              </Rnd>
-            ))}
+
+                    {/* Live Coordinates Label */}
+                    <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-sm text-white text-xs px-2 py-1.5 rounded shadow-xl whitespace-nowrap opacity-0 group-hover/art:opacity-100 transition-opacity z-50 pointer-events-none flex flex-col items-center">
+                        <span className="font-bold flex items-center gap-1"><Move size={10} /> {inchesFromLeft}" From Left</span>
+                        <span className="font-bold flex items-center gap-1 text-yellow-400"><Layout size={10} /> {inchesFromFloor}" From Floor</span>
+                    </div>
+
+                     <button
+                        onClick={() => setArtPieces(artPieces.filter(a => a.id !== art.id))}
+                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1.5 opacity-0 group-hover/art:opacity-100 transition shadow-md hover:bg-red-600 z-30"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                  </div>
+                </Rnd>
+              )})}
           </div>
         )}
       </div>
@@ -457,7 +488,7 @@ const VuraApp = () => {
         <CalibrationModal
           wallImageUrl={wallImage}
           wallImageDimensions={wallDimensions}
-          onSave={(newPpi) => setPpi(newPpi)}
+          onSave={handleCalibrationSave}
           onClose={() => setIsCalibrating(false)}
         />
       )}
