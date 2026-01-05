@@ -14,6 +14,8 @@
   "dependencies": {
     "@imgly/background-removal": "^1.7.0",
     "@neondatabase/serverless": "^1.0.2",
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.1",
     "gsap": "^3.14.2",
@@ -24,7 +26,8 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-rnd": "^10.5.2",
-    "replicate": "^1.4.0"
+    "replicate": "^1.4.0",
+    "zod": "^4.3.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

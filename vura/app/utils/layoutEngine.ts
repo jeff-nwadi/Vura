@@ -11,6 +11,43 @@ export class LayoutEngine {
   }
 
   /**
+   * AI Logic: Finds the best "Anchor" object (Sofa, Bed, etc.) from detected objects.
+   * Prioritizes 'bed', 'couch', 'sofa', 'bench' and largest width.
+   */
+  static findPrimaryAnchor(objects: any[]): any | null {
+      const allowed = ['bed', 'couch', 'sofa', 'bench', 'chair', 'table'];
+      const candidates = objects.filter(o => allowed.includes(o.class));
+      
+      if (candidates.length === 0) return null;
+      
+      // Sort by width (descending) - assume widest is the main piece
+      return candidates.sort((a, b) => b.bbox.width - a.bbox.width)[0];
+  }
+
+  /**
+   * AI Logic: Calculates the ideal center point for art.
+   * Rule: Centered horizontally over anchor.
+   * Rule: Bottom of Art Group should be ~8 inches above Top of Anchor (Hang Zone).
+   * Note: This returns the center X and center Y for the *group*.
+   */
+  static calculateAIHangPoint(
+      anchor: any, 
+      ppi: number, 
+      groupHeightPx: number
+  ): { x: number, y: number } {
+      const anchorCenter = anchor.bbox.x + (anchor.bbox.width / 2);
+      const gapPx = this.inchesToPixels(10, ppi); // 10 inch gap (Smart Anchor)
+      
+      // Top of anchor is its y (since y grows down? No, y is usually top-left).
+      // If bbox.y is top of object, then we want to be above it.
+      // So Target Bottom of Art = Anchor.bbox.y - gapPx.
+      // Center Y of Art = Target Bottom - (GroupHeight / 2).
+      const targetCenterY = (anchor.bbox.y - gapPx) - (groupHeightPx / 2);
+      
+      return { x: anchorCenter, y: targetCenterY };
+  }
+
+  /**
    * Converts inches to pixels using the calculated ratio.
    * @param inches Length in inches.
    * @param ppi Pixels per inch.
